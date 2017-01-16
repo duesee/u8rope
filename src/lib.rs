@@ -1,107 +1,78 @@
-//! # Rope data structure
-//!
-//! ...
-//!
-//! ## Properties
-//!
-//! ...
-//!
-//! ## Usage
-//!
-//! ...
+use std::rc::Rc;
 
-///
-/// Rope data structure.
-///
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Rope {
-    root: Node
+    root: Rc<Node>,
+    length: usize,
 }
 
-///
-/// Rope byte-by-byte iterator.
-/// TODO: Very, very, bad version... (for testing purposes only)
-///
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct RopeByte<'a> {
     index: usize,
     rope: &'a Rope,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Node {
     head: NodeHead,
     body: NodeBody,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct NodeHead {
     weight: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum NodeBody {
     Nil,
     Leaf(Vec<u8>),
-    Branch(Box<Node>, Box<Node>),
+    Branch(Rc<Node>, Rc<Node>),
 }
 
 impl Rope {
-    /// Create an empty `Rope`.
     pub fn new() -> Self {
         Rope {
-            root: Node {
-                head: NodeHead { weight: 0 },
-                body: NodeBody::Nil,
-            }
+            root: Rc::new(
+                Node {
+                    head: NodeHead { weight: 0 },
+                    body: NodeBody::Nil,
+                }
+            ),
+            length: 0,
         }
     }
 
-    /// Return the byte at position `index`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use u8rope::Rope;
-    /// let rope = Rope::from("Hello, World!");
-    ///
-    /// assert_eq!(rope.get( 4), Some(&('o' as u8)));
-    /// assert_eq!(rope.get(13), None);
-    /// ```
     pub fn get(&self, index: usize) -> Option<&u8> {
-        self.root.get(index)
+        if index < self.length {
+            self.root.get(index)
+        } else {
+            None
+        }
     }
 
-    /// Concatenate `self` with `other` and return the new `Rope`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use u8rope::Rope;
-    /// let r1 = Rope::from("Hello, ");
-    /// let r2 = Rope::from("World!");
-    ///
-    /// assert_eq!(r1.concat(&r2), "Hello, World!")
-    /// ```
     pub fn concat(&self, other: &Rope) -> Self {
-        Rope { root: self.root.concat(&other.root) }
+        Rope {
+            root: if self.len() > 0 {
+                Rc::new(
+                    Node {
+                        head: NodeHead { weight: self.len() },
+                        body: NodeBody::Branch(self.root.clone(), other.root.clone())
+                    }
+                )
+            } else {
+                other.root.clone()
+            },
+            length: self.len() + other.len(),
+        }
     }
 
-    ///
-    /// Iterator (TODO)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use u8rope::Rope;
-    /// let rope = Rope::from(vec![0, 1, 2, 3, 4]);
-    /// for byte in &rope {
-    ///     print!("{:02x }", byte);
-    /// }
-    /// println!();
-    /// ```
     pub fn iter(&self) -> RopeByte {
         IntoIterator::into_iter(self)
+    }
+
+    pub fn len(&self) -> usize {
+        self.length
     }
 }
 
@@ -120,20 +91,6 @@ impl Node {
                 }
             },
         }
-    }
-
-    fn concat(&self, other: &Node) -> Node {
-//        let left = self;
-//        let right = other;
-//
-//        let &Node { head: ref head1, body: ref body1 } = left;
-//        let &Node { head: ref head2, body: ref body2 } = right;
-//
-//        Node {
-//            head: NodeHead { weight: head1.weight },
-//            body: NodeBody::Branch(Box::new(*left), Box::new(*right)),
-//        }
-        unimplemented!();
     }
 }
 
@@ -166,13 +123,18 @@ impl<'a> Iterator for RopeByte<'a> {
 impl<T: Into<Vec<u8>>> From<T> for Rope {
     fn from(bytes: T) -> Self {
         let data = bytes.into();
+        let length = data.len();
+
         Rope {
-            root: Node {
-                head: NodeHead {
-                    weight: data.len(),
-                },
-                body: NodeBody::Leaf(data),
-            },
+            root: Rc::new(
+                Node {
+                    head: NodeHead {
+                        weight: length,
+                    },
+                    body: if length > 0 { NodeBody::Leaf(data) } else { NodeBody::Nil },
+                }
+            ),
+            length: length
         }
     }
 }
@@ -207,12 +169,12 @@ mod test {
 
         let node_h = Node {
             head: NodeHead { weight: 1 },
-            body: NodeBody::Branch(Box::new(node_m), Box::new(node_n)),
+            body: NodeBody::Branch(Rc::new(node_m), Rc::new(node_n)),
         };
 
         let node_g = Node {
             head: NodeHead { weight: 2 },
-            body: NodeBody::Branch(Box::new(node_j), Box::new(node_k)),
+            body: NodeBody::Branch(Rc::new(node_j), Rc::new(node_k)),
         };
 
         let node_f = Node {
@@ -227,29 +189,30 @@ mod test {
 
         let node_d = Node {
             head: NodeHead { weight: 6 },
-            body: NodeBody::Branch(Box::new(node_g), Box::new(node_h)),
+            body: NodeBody::Branch(Rc::new(node_g), Rc::new(node_h)),
         };
 
         let node_c = Node {
             head: NodeHead { weight: 6 },
-            body: NodeBody::Branch(Box::new(node_e), Box::new(node_f)),
+            body: NodeBody::Branch(Rc::new(node_e), Rc::new(node_f)),
         };
 
         let node_b = Node {
             head: NodeHead { weight: 9 },
-            body: NodeBody::Branch(Box::new(node_c), Box::new(node_d)),
+            body: NodeBody::Branch(Rc::new(node_c), Rc::new(node_d)),
         };
 
         let node_a = Node {
             head: NodeHead { weight: 22 },
-            body: NodeBody::Branch(Box::new(node_b), Box::new(Node {
+            body: NodeBody::Branch(Rc::new(node_b), Rc::new(Node {
                 head: NodeHead { weight: 0 },
                 body: NodeBody::Nil,
             })),
         };
 
         let rope = Rope {
-            root: node_a
+            root: Rc::new(node_a),
+            length: 22,
         };
 
         (rope, "Hello_my_name_is_Simon".as_bytes().into())
@@ -274,15 +237,45 @@ mod test {
     }
 
     #[test]
+    fn from() {
+        let r1 = Rope::from(vec![]);
+        let r2 = Rope::from(vec![0]);
+        let r3 = Rope::from(vec![0, 1]);
+
+        assert_eq!(r1.len(), 0);
+        assert_eq!(r2.len(), 1);
+        assert_eq!(r3.len(), 2);
+
+        assert_eq!(r1.root.head.weight, 0);
+        assert_eq!(r1.root.body, NodeBody::Nil);
+
+        assert_eq!(r2.root.head.weight, 1);
+        assert_eq!(r2.root.body, NodeBody::Leaf(vec![0]));
+
+        assert_eq!(r3.root.head.weight, 2);
+        assert_eq!(r3.root.body, NodeBody::Leaf(vec![0, 1]));
+    }
+
+    #[test]
+    fn clone() {
+        let r1 = Rope::from(vec![0; 1024*1024]);
+
+        let mut container = Vec::new();
+        for i in 0..1024 * 2     {
+            container.push(r1.clone());
+        }
+    }
+
+    #[test]
     fn get() {
         fn same_behaviour_as_vec(test: Vec<u8>, index: usize) -> bool {
             let rope = Rope::from(test.clone());
-            rope.get(index) == test.get(index)
+            rope.get(index) == test.get(index) && rope.len() == test.len()
         }
 
         fn test_wiki_rope(index: usize) -> bool {
             let (rope, test) = create_wiki_rope();
-            rope.get(index) == test.get(index)
+            rope.get(index) == test.get(index) && rope.len() == test.len()
         }
 
         quickcheck(same_behaviour_as_vec as fn(Vec<u8>, usize) -> bool);
@@ -291,28 +284,27 @@ mod test {
 
     #[test]
     fn concat() {
-        //        let (mut s1, mut s2): (Vec<u8>, Vec<u8>) = ("Hello, ".into(), "World!".into());
-        //        let mut truth = s1.clone();
-        //        truth.append(&mut s2.clone());
-        //
-        //        let (r1, r2) = (Rope::from(s1.clone()), Rope::from(s2.clone()));
-        //        let value = r1.concat(r2);
-        unimplemented!();
-    }
+        fn same_behaviour_as_vec(t1: Vec<u8>, t2: Vec<u8>) -> bool {
+            // Create r3 = r1 || r2
+            let r1 = Rope::from(t1.clone());
+            let r2 = Rope::from(t2.clone());
+            let r3 = r1.concat(&r2);
 
-    #[test]
-    fn split() {
-        unimplemented!();
-    }
+            // Create v3 = v1 || v2
+            let v3 = {
+                let mut v1 = t1.clone();
+                let mut v2 = t2.clone();
+                v1.append(&mut v2);
+                v1
+            };
 
-    #[test]
-    fn insert() {
-        unimplemented!();
-    }
+            println!("R: {:?}\nV: {:?}", r3.iter().take(20).collect::<Vec<_>>(), v3.iter().take(20).collect::<Vec<_>>());
 
-    #[test]
-    fn delete() {
-        unimplemented!();
+            r3.iter().count() == v3.iter().count() &&
+            r3.iter().zip(v3.iter()).all(|(&x, &y)| x == y)
+        }
+
+        quickcheck(same_behaviour_as_vec as fn(Vec<u8>, Vec<u8>) -> bool);
     }
 
     #[test]
@@ -352,6 +344,86 @@ mod test {
 }
 
 /*
+
+
+//! # Rope data structure
+//!
+//! ...
+//!
+//! ## Properties
+//!
+//! ...
+//!
+//! ## Usage
+//!
+//! ...
+
+///
+/// Rope data structure.
+///
+///
+/// Rope byte-by-byte iterator.
+/// TODO: Very, very, bad version... (for testing purposes only)
+///
+
+//    #[test]
+//    fn split() {
+//        unimplemented!();
+//    }
+//
+//    #[test]
+//    fn insert() {
+//        unimplemented!();
+//    }
+//
+//    #[test]
+//    fn delete() {
+//        unimplemented!();
+//    }
+
+/// Create an empty `Rope`.
+
+/// Return the byte at position `index`.
+///
+/// # Examples
+///
+/// ```
+/// # use u8rope::Rope;
+/// let rope = Rope::from("Hello, World!");
+///
+/// assert_eq!(rope.get( 4), Some(&('o' as u8)));
+/// assert_eq!(rope.get(13), None);
+/// ```
+
+/// Concatenate `self` with `other` and return the new `Rope`.
+///
+/// # Examples
+///
+/// ```
+/// # use u8rope::Rope;
+/// let r1 = Rope::from("Hello, ");
+/// let r2 = Rope::from("World!");
+///
+/// assert_eq!(r1.concat(&r2), "Hello, World!")
+/// ```
+
+/// Iterator (TODO)
+///
+/// # Examples
+///
+/// ```
+/// # use u8rope::Rope;
+/// let rope = Rope::from(vec![0, 1, 2, 3, 4]);
+/// for byte in &rope {
+///     print!("{:02x }", byte);
+/// }
+/// println!();
+/// ```
+
+///
+/// Returns the length of the `Rope`, i.e. the bytes it contains. (TODO)
+///
+
 ///
 /// Split the string `s` into two new strings `s_1` and `s_2`,
 /// with (s_1, s_2) = (c_1, ..., c_i, c_i + 1, ..., c_m) where
