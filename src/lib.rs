@@ -2,69 +2,110 @@ use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Rope {
-    root: Rc<Node>,
-    length: usize,
+    root: RcNode,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct RopeByte<'a> {
     index: usize,
     rope: &'a Rope,
 }
 
-#[derive(Debug, PartialEq)]
-struct Node {
-    head: NodeHead,
-    body: NodeBody,
-}
-
-#[derive(Debug, PartialEq)]
-struct NodeHead {
-    weight: usize,
-}
-
-#[derive(Debug, PartialEq)]
-enum NodeBody {
-    Nil,
+#[derive(Debug, PartialEq, Clone)]
+enum Node {
     Leaf(Vec<u8>),
-    Branch(Rc<Node>, Rc<Node>),
+    Branch(RcNode, RcNode),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+struct RcNode(Rc<Node>);
+
+impl RcNode {
+    fn get(&self, index: usize) -> Option<&u8> {
+        match *self.0 {
+            Node::Leaf(ref value) => value.get(index),
+            Node::Branch(ref l, ref r) => {
+                if index < self.weight() {
+                    l.get(index)
+                } else {
+                    r.get(index - self.weight())
+                }
+            },
+        }
+    }
+
+    fn concat(&self, other: &Self) -> Self {
+        RcNode(Rc::new(Node::Branch(self.clone(), other.clone())))
+    }
+
+    fn split(&self, index: usize) -> (Self, Self) {
+        match *self.0 {
+            Node::Leaf(ref value) => {
+                let (l, r) = value.split_at(index);
+                (RcNode(Rc::new(Node::Leaf(l.to_owned()))),
+                 RcNode(Rc::new(Node::Leaf(r.to_owned()))))
+            },
+            Node::Branch(ref l, ref r) => {
+                unimplemented!();
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        match *self.0 {
+            Node::Leaf(ref vec) => vec.len(),
+            Node::Branch(ref l, ref r) => l.len() + r.len(),
+        }
+    }
+
+    fn weight(&self) -> usize {
+        match *self.0 {
+            Node::Leaf(ref vec) => vec.len(),
+            Node::Branch(ref l, _) => l.len(),
+        }
+    }
+
+    fn graphviz(&self, counter: usize, names: &mut Vec<u8>) {
+        let name = names.pop().unwrap_or('?' as u8) as char;
+
+        match *self.0 {
+            Node::Leaf(ref value) => {
+                let name = format!("\"{} {:?}\"", name, value);
+                println!("{};", name);
+                println!("\t{} [shape=rectangle]", name);
+            },
+            Node::Branch(ref l, ref r) => {
+                let name = format!("\"{}, ({}w) {}l\"", name, self.weight(), self.len());
+
+                if counter > 0 {
+                    println!("{};", name);
+                }
+
+                print!("\t{} -> ", name);
+                l.graphviz(counter + 1, names);
+                print!("\t{} -> ", name);
+                r.graphviz(counter + 1, names);
+            }
+        }
+    }
 }
 
 impl Rope {
     pub fn new() -> Self {
-        Rope {
-            root: Rc::new(
-                Node {
-                    head: NodeHead { weight: 0 },
-                    body: NodeBody::Nil,
-                }
-            ),
-            length: 0,
-        }
+        Rope { root: RcNode(Rc::new(Node::Leaf(vec![]))) }
     }
 
     pub fn get(&self, index: usize) -> Option<&u8> {
-        if index < self.length {
-            self.root.get(index)
-        } else {
-            None
-        }
+        self.root.get(index)
     }
 
     pub fn concat(&self, other: &Rope) -> Self {
-        Rope {
-            root: if self.len() > 0 {
-                Rc::new(
-                    Node {
-                        head: NodeHead { weight: self.len() },
-                        body: NodeBody::Branch(self.root.clone(), other.root.clone())
-                    }
-                )
-            } else {
-                other.root.clone()
-            },
-            length: self.len() + other.len(),
-        }
+        Rope { root: self.root.concat(&other.root) }
+    }
+
+    pub fn split(&self, index: usize) -> (Self, Self) {
+        let (l, r) = self.root.split(index);
+        (Rope { root: l }, Rope {root: r} )
     }
 
     pub fn iter(&self) -> RopeByte {
@@ -72,25 +113,14 @@ impl Rope {
     }
 
     pub fn len(&self) -> usize {
-        self.length
+        self.root.len()
     }
-}
 
-impl Node {
-    fn get(&self, index: usize) -> Option<&u8> {
-        let &Node { ref head, ref body } = self;
-
-        match *body {
-            NodeBody::Nil => None,
-            NodeBody::Leaf(ref value) => value.get(index),
-            NodeBody::Branch(ref left, ref right) => {
-                if index < head.weight {
-                    left.get(index)
-                } else {
-                    right.get(index - head.weight)
-                }
-            },
-        }
+    pub fn graphviz(&self) {
+        println!("digraph BST {{");
+        let mut names = (65..91).rev().collect::<Vec<_>>();
+        self.root.graphviz(0, &mut names);
+        println!("}}");
     }
 }
 
@@ -99,10 +129,7 @@ impl<'a> IntoIterator for &'a Rope {
     type IntoIter = RopeByte<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        RopeByte {
-            index: 0,
-            rope: self,
-        }
+        RopeByte { index: 0, rope: self }
     }
 }
 
@@ -110,11 +137,7 @@ impl<'a> Iterator for RopeByte<'a> {
     type Item = &'a u8;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let ret = if self.index < self.rope.root.head.weight {
-            self.rope.get(self.index)
-        } else {
-            None
-        };
+        let ret = self.rope.get(self.index);
         self.index += 1;
         ret
     }
@@ -122,20 +145,7 @@ impl<'a> Iterator for RopeByte<'a> {
 
 impl<T: Into<Vec<u8>>> From<T> for Rope {
     fn from(bytes: T) -> Self {
-        let data = bytes.into();
-        let length = data.len();
-
-        Rope {
-            root: Rc::new(
-                Node {
-                    head: NodeHead {
-                        weight: length,
-                    },
-                    body: if length > 0 { NodeBody::Leaf(data) } else { NodeBody::Nil },
-                }
-            ),
-            length: length
-        }
+        Rope { root: RcNode(Rc::new(Node::Leaf(bytes.into()))) }
     }
 }
 
@@ -147,75 +157,76 @@ mod test {
     use self::quickcheck::quickcheck;
 
     fn create_wiki_rope() -> (Rope, Vec<u8>) {
-        let node_n = Node {
-            head: NodeHead { weight: 6 },
-            body: NodeBody::Leaf("_Simon".into()),
-        };
-
-        let node_m = Node {
-            head: NodeHead { weight: 1 },
-            body: NodeBody::Leaf("s".into()),
-        };
-
-        let node_k = Node {
-            head: NodeHead { weight: 4 },
-            body: NodeBody::Leaf("me_i".into()),
-        };
-
-        let node_j = Node {
-            head: NodeHead { weight: 2 },
-            body: NodeBody::Leaf("na".into()),
-        };
-
-        let node_h = Node {
-            head: NodeHead { weight: 1 },
-            body: NodeBody::Branch(Rc::new(node_m), Rc::new(node_n)),
-        };
-
-        let node_g = Node {
-            head: NodeHead { weight: 2 },
-            body: NodeBody::Branch(Rc::new(node_j), Rc::new(node_k)),
-        };
-
-        let node_f = Node {
-            head: NodeHead { weight: 3 },
-            body: NodeBody::Leaf("my_".into()),
-        };
-
-        let node_e = Node {
-            head: NodeHead { weight: 6 },
-            body: NodeBody::Leaf("Hello_".into()),
-        };
-
-        let node_d = Node {
-            head: NodeHead { weight: 6 },
-            body: NodeBody::Branch(Rc::new(node_g), Rc::new(node_h)),
-        };
-
-        let node_c = Node {
-            head: NodeHead { weight: 6 },
-            body: NodeBody::Branch(Rc::new(node_e), Rc::new(node_f)),
-        };
-
-        let node_b = Node {
-            head: NodeHead { weight: 9 },
-            body: NodeBody::Branch(Rc::new(node_c), Rc::new(node_d)),
-        };
-
-        let node_a = Node {
-            head: NodeHead { weight: 22 },
-            body: NodeBody::Branch(Rc::new(node_b), Rc::new(Node {
-                head: NodeHead { weight: 0 },
-                body: NodeBody::Nil,
-            })),
-        };
-
-        let rope = Rope {
-            root: Rc::new(node_a),
-            length: 22,
-        };
-
-        (rope, "Hello_my_name_is_Simon".as_bytes().into())
+//        let node_n = Node {
+//            head: NodeHead { weight: 6 },
+//            body: NodeBody::Leaf("_Simon".into()),
+//        };
+//
+//        let node_m = Node {
+//            head: NodeHead { weight: 1 },
+//            body: NodeBody::Leaf("s".into()),
+//        };
+//
+//        let node_k = Node {
+//            head: NodeHead { weight: 4 },
+//            body: NodeBody::Leaf("me_i".into()),
+//        };
+//
+//        let node_j = Node {
+//            head: NodeHead { weight: 2 },
+//            body: NodeBody::Leaf("na".into()),
+//        };
+//
+//        let node_h = Node {
+//            head: NodeHead { weight: 1 },
+//            body: NodeBody::Branch(Rc::new(node_m), Rc::new(node_n)),
+//        };
+//
+//        let node_g = Node {
+//            head: NodeHead { weight: 2 },
+//            body: NodeBody::Branch(Rc::new(node_j), Rc::new(node_k)),
+//        };
+//
+//        let node_f = Node {
+//            head: NodeHead { weight: 3 },
+//            body: NodeBody::Leaf("my_".into()),
+//        };
+//
+//        let node_e = Node {
+//            head: NodeHead { weight: 6 },
+//            body: NodeBody::Leaf("Hello_".into()),
+//        };
+//
+//        let node_d = Node {
+//            head: NodeHead { weight: 6 },
+//            body: NodeBody::Branch(Rc::new(node_g), Rc::new(node_h)),
+//        };
+//
+//        let node_c = Node {
+//            head: NodeHead { weight: 6 },
+//            body: NodeBody::Branch(Rc::new(node_e), Rc::new(node_f)),
+//        };
+//
+//        let node_b = Node {
+//            head: NodeHead { weight: 9 },
+//            body: NodeBody::Branch(Rc::new(node_c), Rc::new(node_d)),
+//        };
+//
+//        let node_a = Node {
+//            head: NodeHead { weight: 22 },
+//            body: NodeBody::Branch(Rc::new(node_b), Rc::new(Node {
+//                head: NodeHead { weight: 0 },
+//                body: NodeBody::Nil,
+//            })),
+//        };
+//
+//        let rope = Rope {
+//            root: Rc::new(node_a),
+//            length: 22,
+//        };
+//
+//        (rope, "Hello_my_name_is_Simon".as_bytes().into())
+        unimplemented!();
     }
 
     #[test]
@@ -225,7 +236,7 @@ mod test {
             Rope::from("created using `from` and &str"),
             Rope::from(vec![0, 1, 2, 3, 4]),
             "created using `into`".into(),
-            create_wiki_rope().0,
+            //create_wiki_rope().0,
         ];
 
         for rope in ropes {
@@ -238,73 +249,90 @@ mod test {
 
     #[test]
     fn from() {
-        let r1 = Rope::from(vec![]);
-        let r2 = Rope::from(vec![0]);
-        let r3 = Rope::from(vec![0, 1]);
-
-        assert_eq!(r1.len(), 0);
-        assert_eq!(r2.len(), 1);
-        assert_eq!(r3.len(), 2);
-
-        assert_eq!(r1.root.head.weight, 0);
-        assert_eq!(r1.root.body, NodeBody::Nil);
-
-        assert_eq!(r2.root.head.weight, 1);
-        assert_eq!(r2.root.body, NodeBody::Leaf(vec![0]));
-
-        assert_eq!(r3.root.head.weight, 2);
-        assert_eq!(r3.root.body, NodeBody::Leaf(vec![0, 1]));
+//        let r1 = Rope::from(vec![]);
+//        let r2 = Rope::from(vec![0]);
+//        let r3 = Rope::from(vec![0, 1]);
+//
+//        assert_eq!(r1.len(), 0);
+//        assert_eq!(r2.len(), 1);
+//        assert_eq!(r3.len(), 2);
+//
+//        assert_eq!(r1.root.head.weight, 0);
+//        assert_eq!(r1.root.body, NodeBody::Nil);
+//
+//        assert_eq!(r2.root.head.weight, 1);
+//        assert_eq!(r2.root.body, NodeBody::Leaf(vec![0]));
+//
+//        assert_eq!(r3.root.head.weight, 2);
+//        assert_eq!(r3.root.body, NodeBody::Leaf(vec![0, 1]));
     }
 
     #[test]
     fn clone() {
+        impl Drop for Node {
+            fn drop(&mut self) {
+                println!("DROP COUNTER");
+            }
+        }
+
         let r1 = Rope::from(vec![0; 1024*1024]);
 
         let mut container = Vec::new();
-        for i in 0..1024 * 2     {
+        for i in 1..1024 * 2 {
             container.push(r1.clone());
         }
     }
 
     #[test]
     fn get() {
-        fn same_behaviour_as_vec(test: Vec<u8>, index: usize) -> bool {
+        fn same_as_vec(test: Vec<u8>, index: usize) -> bool {
             let rope = Rope::from(test.clone());
             rope.get(index) == test.get(index) && rope.len() == test.len()
         }
 
-        fn test_wiki_rope(index: usize) -> bool {
-            let (rope, test) = create_wiki_rope();
-            rope.get(index) == test.get(index) && rope.len() == test.len()
-        }
+//        fn test_wiki_rope(index: usize) -> bool {
+//            let (rope, test) = create_wiki_rope();
+//            rope.get(index) == test.get(index) && rope.len() == test.len()
+//        }
 
-        quickcheck(same_behaviour_as_vec as fn(Vec<u8>, usize) -> bool);
-        quickcheck(test_wiki_rope as fn(usize) -> bool);
+        quickcheck(same_as_vec as fn(Vec<u8>, usize) -> bool);
+//        quickcheck(test_wiki_rope as fn(usize) -> bool);
     }
 
     #[test]
     fn concat() {
-        fn same_behaviour_as_vec(t1: Vec<u8>, t2: Vec<u8>) -> bool {
-            // Create r3 = r1 || r2
-            let r1 = Rope::from(t1.clone());
-            let r2 = Rope::from(t2.clone());
-            let r3 = r1.concat(&r2);
-
-            // Create v3 = v1 || v2
-            let v3 = {
-                let mut v1 = t1.clone();
-                let mut v2 = t2.clone();
-                v1.append(&mut v2);
-                v1
+        fn same_as_vec(test: Vec<Vec<u8>>) -> bool {
+            let r = {
+                let mut tmp = Rope::new();
+                for v in &test {
+                    tmp = tmp.concat(&Rope::from(v.clone()));
+                }
+                tmp
             };
 
-            println!("R: {:?}\nV: {:?}", r3.iter().take(20).collect::<Vec<_>>(), v3.iter().take(20).collect::<Vec<_>>());
+            let v = {
+                let mut tmp = Vec::new();
+                for v in &test {
+                    tmp.append(&mut v.clone());
+                }
+                tmp
+            };
 
-            r3.iter().count() == v3.iter().count() &&
-            r3.iter().zip(v3.iter()).all(|(&x, &y)| x == y)
+            println!("R: {:?}\nV: {:?}", r.iter().take(20).collect::<Vec<_>>(), v.iter().take(20).collect::<Vec<_>>());
+
+            r.iter().count() == v.iter().count() && r.iter().zip(v.iter()).all(|(&x, &y)| x == y)
         }
 
-        quickcheck(same_behaviour_as_vec as fn(Vec<u8>, Vec<u8>) -> bool);
+        quickcheck(same_as_vec as fn(Vec<Vec<u8>>) -> bool);
+    }
+
+    #[test]
+    fn split() {
+        let rope = Rope::from(vec![0, 1, 2, 3, 4, 5, 6]);
+        let (l, r) = rope.split(4);
+
+        l.graphviz();
+        r.graphviz();
     }
 
     #[test]
@@ -341,6 +369,31 @@ mod test {
         }
         println!();
     }
+
+    #[test]
+    fn graphviz() {
+        let ropeA = {
+            let tmp = Rope::from(vec![0, 1]);
+            let tmp = tmp.concat(&Rope::from(vec![2, ]));
+            let tmp = tmp.concat(&Rope::from(vec![3, 4]));
+            let tmp = tmp.concat(&Rope::from(vec![5]));
+            tmp
+        };
+
+        let ropeB = {
+            let tmp = Rope::from(vec![6, 7]);
+            let tmp = tmp.concat(&Rope::from(vec![8, 9]));
+            let tmp = tmp.concat(&Rope::from(vec![10, 11]));
+            let tmp = tmp.concat(&Rope::from(vec![12]));
+            tmp
+        };
+
+        let ropeC = ropeA.concat(&ropeB);
+
+        ropeA.graphviz();
+        ropeB.graphviz();
+        ropeC.graphviz();
+    }
 }
 
 /*
@@ -366,10 +419,6 @@ mod test {
 /// TODO: Very, very, bad version... (for testing purposes only)
 ///
 
-//    #[test]
-//    fn split() {
-//        unimplemented!();
-//    }
 //
 //    #[test]
 //    fn insert() {
